@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: pdf2epub
+    name: askiminsitesi
     env: docker
     plan: free
     healthCheckPath: /health
