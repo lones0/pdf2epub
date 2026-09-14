@@ -45,9 +45,22 @@ def convert():
             return jsonify({"error": "Dönüştürme zaman aşımına uğradı."}), 504
 
         if result.returncode != 0 or not os.path.exists(epub_path):
+            error_msg = "Dönüştürme başarısız oldu."
+            if result.returncode in (-9, 137):
+                error_msg = "Sunucu bellek sınırı aşıldı (RAM yetersiz)."
+                detail_text = "PDF dosyası çok büyük veya çok fazla görsel içerdiği için Render ücretsiz planının 512 MB bellek sınırı aşıldı."
+            else:
+                detail_text = (result.stderr.strip() if result.stderr else "") or (result.stdout.strip() if result.stdout else "")
+                if not detail_text:
+                    detail_text = f"Calibre bilinmeyen hata kodu ile sonlandı (kod: {result.returncode})."
+                elif "password" in detail_text.lower():
+                    error_msg = "PDF şifreli veya korumalı."
+                elif "permission" in detail_text.lower():
+                    error_msg = "PDF kopyalama/dönüştürme izinleri kısıtlı."
+
             return jsonify({
-                "error": "Dönüştürme başarısız oldu.",
-                "details": result.stderr[-2000:] if result.stderr else "",
+                "error": error_msg,
+                "details": detail_text[-2000:],
             }), 500
 
         # Read into memory before the temp dir is cleaned up

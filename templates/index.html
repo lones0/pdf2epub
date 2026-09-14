@@ -55,7 +55,32 @@
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   .status { margin-top: 16px; font-size: 0.9rem; min-height: 20px; }
   .status.error { color: #c0392b; }
-  .status.success { color: #27ae60; }
+  .status.success { color: #27ae60; font-weight: 500; }
+  .error-box {
+    margin-top: 14px;
+    padding: 12px;
+    background: #fdf0ed;
+    border: 1px solid #fad2cb;
+    border-radius: 8px;
+    text-align: left;
+    font-size: 0.85rem;
+    color: #b33927;
+  }
+  .error-box strong { display: block; margin-bottom: 4px; }
+  .details-pre {
+    margin: 6px 0 0 0;
+    padding: 8px;
+    background: #fff;
+    border: 1px solid #f2c0b7;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-family: monospace;
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #555;
+  }
   .spinner {
     display: inline-block;
     width: 16px; height: 16px;
@@ -120,8 +145,23 @@ function setFile(file) {
   selectedFile = file;
   filenameEl.textContent = file.name;
   convertBtn.disabled = false;
-  statusEl.textContent = '';
+  statusEl.innerHTML = '';
   statusEl.className = 'status';
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function showError(title, details) {
+  let html = `<div class="error-box"><strong>❌ ${escapeHtml(title)}</strong>`;
+  if (details && details.trim()) {
+    html += `<div style="font-size:0.75rem;margin-top:6px;color:#777;">Hata Detayı:</div><pre class="details-pre">${escapeHtml(details)}</pre>`;
+  }
+  html += `</div>`;
+  statusEl.innerHTML = html;
 }
 
 convertBtn.addEventListener('click', async () => {
@@ -136,8 +176,11 @@ convertBtn.addEventListener('click', async () => {
   try {
     const res = await fetch('/convert', { method: 'POST', body: formData });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Dönüştürme başarısız oldu.');
+      const errData = await res.json().catch(() => ({}));
+      const title = errData.error || 'Dönüştürme başarısız oldu.';
+      const details = errData.details || '';
+      showError(title, details);
+      return;
     }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -148,11 +191,9 @@ convertBtn.addEventListener('click', async () => {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    statusEl.textContent = 'Tamamlandı, indirildi.';
-    statusEl.className = 'status success';
+    statusEl.innerHTML = '<span class="status success">✅ Tamamlandı, EPUB indirildi!</span>';
   } catch (e) {
-    statusEl.textContent = e.message;
-    statusEl.className = 'status error';
+    showError('Bağlantı veya sunucu hatası oluştu.', e.message || '');
   } finally {
     convertBtn.disabled = false;
   }
