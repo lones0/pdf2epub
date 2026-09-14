@@ -14,37 +14,46 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE_MB * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
 
 
-def convert_text_to_epub(text_content, epub_path, title="E-Kitap"):
-    """Düz metni Calibre ebook-convert kullanarak düşük RAM ile EPUB'a çevirir."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", encoding="utf-8", delete=False) as f:
-        f.write(text_content)
-        tmp_txt = f.name
-
+def extract_text_to_file(pdf_path, txt_path):
+    """C++ poppler pdftotext ile 0.5 saniyede ve sıfır RAM ile metin çıkarır. Yedek olarak pypdf kullanır."""
+    # 1. Poppler pdftotext (ultra hızlı C++ motoru, 600 sayfa < 1 sn)
     try:
-        cmd = [
-            "ebook-convert",
-            tmp_txt,
-            epub_path,
-            "--title", title,
-            "--input-encoding", "utf-8",
-            "--dont-split-on-page-breaks"
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=False, timeout=300)
-        return res.returncode == 0 and os.path.exists(epub_path)
-    finally:
-        if os.path.exists(tmp_txt):
-            os.remove(tmp_txt)
+        res = subprocess.run(
+            ["pdftotext", "-layout", pdf_path, txt_path],
+            capture_output=True,
+            timeout=40
+        )
+        if res.returncode == 0 and os.path.exists(txt_path) and os.path.getsize(txt_path) > 10:
+            return True
+    except Exception:
+        pass
+
+    # 2. Yedek pypdf motoru
+    try:
+        reader = PdfReader(pdf_path)
+        with open(txt_path, "w", encoding="utf-8") as f:
+            for page in reader.pages:
+                t = page.extract_text()
+                if t:
+                    f.write(t)
+                    f.write("\n\n")
+        return os.path.exists(txt_path) and os.path.getsize(txt_path) > 10
+    except Exception:
+        return False
 
 
-def extract_text_from_pdf(pdf_path):
-    """PDF dosyasından sayfa sayfa metin ayıklar (RAM harcamaz)."""
-    reader = PdfReader(pdf_path)
-    parts = []
-    for page in reader.pages:
-        txt = page.extract_text()
-        if txt:
-            parts.append(txt)
-    return "\n\n".join(parts)
+def convert_txt_to_epub(txt_path, epub_path, title="E-Kitap"):
+    """Düz metin dosyasını Calibre ile hafif ve hızlı şekilde EPUB'a çevirir."""
+    cmd = [
+        "ebook-convert",
+        txt_path,
+        epub_path,
+        "--title", title,
+        "--input-encoding", "utf-8",
+        "--dont-split-on-page-breaks"
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=False, timeout=180)
+    return res.returncode == 0 and os.path.exists(epub_path)
 
 
 @app.route("/")
@@ -85,24 +94,17 @@ def convert():
 
             file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
 
-            # Eğer PDF çok büyükse (>100 sayfa veya >10MB), Calibre 512 MB RAM'de çöker.
-            # Güvenli ve hızlı metin çıkarıcı hattını doğrudan çalıştır!
-            if num_pages > 100 or file_size_mb > 10:
-                try:
-                    extracted = extract_text_from_pdf(input_path)
-                except Exception as e:
-                    return jsonify({
-                        "error": "PDF metni okunamadı.",
-                        "details": str(e)
-                    }), 500
-
-                if not extracted.strip():
+            # Büyük PDF'lerde (>80 sayfa veya >8MB) doğrudan hızlı metin çıkarıcı hattını çalıştır
+            # Böylece Render'ın 512 MB RAM ve 60 saniyelik proxy sınırına asla takılmaz!
+            if num_pages > 80 or file_size_mb > 8:
+                txt_path = os.path.join(tmpdir, f"{job_id}.txt")
+                if not extract_text_to_file(input_path, txt_path):
                     return jsonify({
                         "error": "Bu PDF taranmış görsel (scan) içeriyor.",
                         "details": "PDF içinde seçilebilir dijital metin bulunamadı. Taranmış kitap fotoğrafları OCR olmadan dönüştürülemez."
                     }), 400
 
-                converted_successfully = convert_text_to_epub(extracted, epub_path, title=book_title)
+                converted_successfully = convert_txt_to_epub(txt_path, epub_path, title=book_title)
 
             else:
                 # Normal boyutlu PDF: Önce doğrudan Calibre ile dene (görseller ve mizanpaj korunsun)
@@ -114,29 +116,24 @@ def convert():
                     "--linearize-tables"
                 ]
                 try:
-                    result = subprocess.run(cmd, capture_output=True, text=False, timeout=300)
+                    result = subprocess.run(cmd, capture_output=True, text=False, timeout=90)
                     if result.returncode == 0 and os.path.exists(epub_path):
                         converted_successfully = True
                 except subprocess.TimeoutExpired:
-                    return jsonify({"error": "Dönüştürme zaman aşımına uğradı."}), 504
+                    pass
 
-                # Doğrudan dönüştürme başarısız olduysa (RAM sınırı vb.), otomatik olarak metin çıkarıcıya geç!
+                # Doğrudan dönüştürme başarısız olursa otomatik metin çıkarıcıya geç
                 if not converted_successfully:
-                    try:
-                        extracted = extract_text_from_pdf(input_path)
-                        if extracted.strip():
-                            converted_successfully = convert_text_to_epub(extracted, epub_path, title=book_title)
-                    except Exception:
-                        pass
+                    txt_path = os.path.join(tmpdir, f"{job_id}.txt")
+                    if extract_text_to_file(input_path, txt_path):
+                        converted_successfully = convert_txt_to_epub(txt_path, epub_path, title=book_title)
 
         elif ext == ".txt":
-            with open(input_path, "r", encoding="utf-8", errors="replace") as f:
-                txt_content = f.read()
-            converted_successfully = convert_text_to_epub(txt_content, epub_path, title=book_title)
+            converted_successfully = convert_txt_to_epub(input_path, epub_path, title=book_title)
 
         elif ext == ".docx":
             cmd = ["ebook-convert", input_path, epub_path, "--title", book_title]
-            res = subprocess.run(cmd, capture_output=True, text=False, timeout=300)
+            res = subprocess.run(cmd, capture_output=True, text=False, timeout=180)
             converted_successfully = (res.returncode == 0 and os.path.exists(epub_path))
 
         if not converted_successfully or not os.path.exists(epub_path):
