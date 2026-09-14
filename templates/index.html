@@ -96,14 +96,14 @@
 </head>
 <body>
   <div class="card">
-    <h1>PDF → EPUB</h1>
-    <p class="subtitle">PDF dosyanı yükle, EPUB olarak indir.</p>
+    <h1>PDF / TXT → EPUB</h1>
+    <p class="subtitle">PDF, TXT veya DOCX dosyanı yükle, EPUB olarak indir.</p>
 
     <label class="drop-zone" id="dropZone">
-      <div class="icon">📄</div>
+      <div class="icon">📖</div>
       <div>Dosya seç ya da sürükle bırak</div>
       <div class="filename" id="filename"></div>
-      <input type="file" id="fileInput" accept="application/pdf">
+      <input type="file" id="fileInput" accept=".pdf,.txt,.docx">
     </label>
 
     <button id="convertBtn" disabled>Dönüştür</button>
@@ -137,9 +137,10 @@ fileInput.addEventListener('change', () => {
 });
 
 function setFile(file) {
-  if (!file.name.toLowerCase().endsWith('.pdf')) {
-    statusEl.textContent = 'Sadece PDF dosyası kabul ediliyor.';
-    statusEl.className = 'status error';
+  const allowed = ['.pdf', '.txt', '.docx'];
+  const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+  if (!allowed.includes(ext)) {
+    statusEl.innerHTML = '<div class="error-box"><strong>❌ Sadece PDF, TXT veya DOCX dosyaları kabul ediliyor.</strong></div>';
     return;
   }
   selectedFile = file;
@@ -176,9 +177,24 @@ convertBtn.addEventListener('click', async () => {
   try {
     const res = await fetch('/convert', { method: 'POST', body: formData });
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      const title = errData.error || 'Dönüştürme başarısız oldu.';
-      const details = errData.details || '';
+      let title = 'Dönüştürme başarısız oldu.';
+      let details = '';
+      if (res.status === 502) {
+        title = 'Sunucu bellek sınırı aşıldı (HTTP 502 - RAM Yetersiz)';
+        details = 'Bu PDF dosyası çok kalın (yüzlerce sayfa) veya çok fazla görsel içerdiği için Render ücretsiz planındaki 512 MB bellek sınırı aşıldı.\n\n💡 İpucu: Elinizde bu kitabın .txt veya .docx versiyonu varsa onu yüklerseniz birkaç saniyede sorunsuz çevrilecektir!';
+      } else if (res.status === 504) {
+        title = 'Zaman aşımı (504)';
+        details = 'Dönüştürme işlemi 5 dakikadan uzun sürdüğü için zaman aşımına uğradı.';
+      } else {
+        try {
+          const errData = await res.json();
+          title = errData.error || title;
+          details = errData.details || '';
+        } catch (jsonErr) {
+          const text = await res.text().catch(() => '');
+          details = text.slice(0, 1000) || `HTTP ${res.status} ${res.statusText}`;
+        }
+      }
       showError(title, details);
       return;
     }
@@ -186,7 +202,8 @@ convertBtn.addEventListener('click', async () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectedFile.name.replace(/\.pdf$/i, '.epub');
+    const baseName = selectedFile.name.substring(0, selectedFile.name.lastIndexOf('.')) || selectedFile.name;
+    a.download = baseName + '.epub';
     document.body.appendChild(a);
     a.click();
     a.remove();
