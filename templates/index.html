@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF → EPUB</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f3f0;
+    color: #1a1a1a;
+    display: flex;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 32px 24px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+    text-align: center;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  p.subtitle { color: #666; font-size: 0.9rem; margin-top: 0; margin-bottom: 24px; }
+  .drop-zone {
+    border: 2px dashed #ccc;
+    border-radius: 12px;
+    padding: 32px 16px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .drop-zone.dragover { border-color: #444; background: #fafafa; }
+  .drop-zone input { display: none; }
+  .drop-zone .icon { font-size: 2.2rem; margin-bottom: 8px; }
+  .filename { margin-top: 12px; font-size: 0.9rem; color: #333; word-break: break-all; }
+  button {
+    margin-top: 20px;
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: #1a1a1a;
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 0.9rem; min-height: 20px; }
+  .status.error { color: #c0392b; }
+  .status.success { color: #27ae60; }
+  .spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid #ccc;
+    border-top-color: #1a1a1a;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>PDF → EPUB</h1>
+    <p class="subtitle">PDF dosyanı yükle, EPUB olarak indir.</p>
+
+    <label class="drop-zone" id="dropZone">
+      <div class="icon">📄</div>
+      <div>Dosya seç ya da sürükle bırak</div>
+      <div class="filename" id="filename"></div>
+      <input type="file" id="fileInput" accept="application/pdf">
+    </label>
+
+    <button id="convertBtn" disabled>Dönüştür</button>
+    <div class="status" id="status"></div>
+  </div>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const filenameEl = document.getElementById('filename');
+const convertBtn = document.getElementById('convertBtn');
+const statusEl = document.getElementById('status');
+let selectedFile = null;
+
+dropZone.addEventListener('click', () => fileInput.click());
+
+['dragover', 'dragleave', 'drop'].forEach(evt => {
+  dropZone.addEventListener(evt, e => {
+    e.preventDefault();
+    dropZone.classList.toggle('dragover', evt === 'dragover');
+  });
+});
+
+dropZone.addEventListener('drop', e => {
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) setFile(fileInput.files[0]);
+});
+
+function setFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    statusEl.textContent = 'Sadece PDF dosyası kabul ediliyor.';
+    statusEl.className = 'status error';
+    return;
+  }
+  selectedFile = file;
+  filenameEl.textContent = file.name;
+  convertBtn.disabled = false;
+  statusEl.textContent = '';
+  statusEl.className = 'status';
+}
+
+convertBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  convertBtn.disabled = true;
+  statusEl.className = 'status';
+  statusEl.innerHTML = '<span class="spinner"></span>Dönüştürülüyor, biraz sürebilir...';
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+
+  try {
+    const res = await fetch('/convert', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Dönüştürme başarısız oldu.');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = selectedFile.name.replace(/\.pdf$/i, '.epub');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    statusEl.textContent = 'Tamamlandı, indirildi.';
+    statusEl.className = 'status success';
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.className = 'status error';
+  } finally {
+    convertBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
